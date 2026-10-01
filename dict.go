@@ -3,58 +3,59 @@ package main
 import (
 	"fmt"
 	"hash/maphash"
+	"math/rand"
 	"time"
 )
 
 const (
-	initialSize   = 4
-	emptyVisitCap = 10
-	shrinkRatio   = 8
+	initialSize   = 4  
+	emptyVisitCap = 10 
+	shrinkRatio   = 8  
 )
 
-type entry struct {
+type entry[V any] struct {
 	key   string
-	value string
-	next  *entry
+	value V
+	next  *entry[V]
 }
 
-type table struct {
-	buckets []*entry
+type table[V any] struct {
+	buckets []*entry[V]
 	mask    uint64
 	used    int
 }
 
-func newTable(size uint64) *table {
-	return &table{buckets: make([]*entry, size), mask: size - 1}
+func newTable[V any](size uint64) *table[V] {
+	return &table[V]{buckets: make([]*entry[V], size), mask: size - 1}
 }
 
-func (t *table) size() uint64 {
+func (t *table[V]) size() uint64 {
 	return t.mask + 1
 }
 
-type Dict struct {
-	ht        [2]*table
-	rehashIdx int64
+type Dict[V any] struct {
+	ht        [2]*table[V]
+	rehashIdx int64 
 	seed      maphash.Seed
 }
 
-func NewDict() *Dict {
-	return &Dict{
-		ht:        [2]*table{newTable(initialSize), nil},
+func NewDict[V any]() *Dict[V] {
+	return &Dict[V]{
+		ht:        [2]*table[V]{newTable[V](initialSize), nil},
 		rehashIdx: -1,
-		seed:      maphash.MakeSeed(),
+		seed:      maphash.MakeSeed(), 
 	}
 }
 
-func (d *Dict) hash(key string) uint64 {
+func (d *Dict[V]) hash(key string) uint64 {
 	return maphash.String(d.seed, key)
 }
 
-func (d *Dict) isRehashing() bool {
+func (d *Dict[V]) isRehashing() bool {
 	return d.rehashIdx != -1
 }
 
-func (d *Dict) Len() int {
+func (d *Dict[V]) Len() int {
 	n := d.ht[0].used
 	if d.ht[1] != nil {
 		n += d.ht[1].used
@@ -62,17 +63,19 @@ func (d *Dict) Len() int {
 	return n
 }
 
-func (d *Dict) Get(key string) (string, bool) {
+
+func (d *Dict[V]) Get(key string) (V, bool) {
 	if d.isRehashing() {
-		d.rehash(1)
+		d.rehash(1) 
 	}
 	if e := d.find(key, d.hash(key)); e != nil {
 		return e.value, true
 	}
-	return "", false
+	var zero V
+	return zero, false
 }
 
-func (d *Dict) find(key string, h uint64) *entry {
+func (d *Dict[V]) find(key string, h uint64) *entry[V] {
 	for i := 0; i <= 1; i++ {
 		t := d.ht[i]
 		if t == nil {
@@ -91,27 +94,31 @@ func (d *Dict) find(key string, h uint64) *entry {
 	return nil
 }
 
-func (d *Dict) Set(key, value string) {
+
+func (d *Dict[V]) Set(key string, value V) {
 	if d.isRehashing() {
 		d.rehash(1)
 	}
 	h := d.hash(key)
+
 	if e := d.find(key, h); e != nil {
 		e.value = value
 		return
 	}
 
 	d.expandIfNeeded()
+
 	t := d.ht[0]
 	if d.isRehashing() {
 		t = d.ht[1]
 	}
 	idx := h & t.mask
-	t.buckets[idx] = &entry{key: key, value: value, next: t.buckets[idx]}
+	t.buckets[idx] = &entry[V]{key: key, value: value, next: t.buckets[idx]}
 	t.used++
 }
 
-func (d *Dict) Delete(key string) bool {
+
+func (d *Dict[V]) Delete(key string) bool {
 	if d.isRehashing() {
 		d.rehash(1)
 	}
@@ -126,7 +133,7 @@ func (d *Dict) Delete(key string) bool {
 		if i == 0 && d.isRehashing() && int64(idx) < d.rehashIdx {
 			continue
 		}
-		var prev *entry
+		var prev *entry[V]
 		for e := t.buckets[idx]; e != nil; e = e.next {
 			if e.key == key {
 				if prev == nil {
@@ -144,17 +151,53 @@ func (d *Dict) Delete(key string) bool {
 	return false
 }
 
-func (d *Dict) expandIfNeeded() {
+func (d *Dict[V]) RandomEntry() (string, V, bool) {
+	var zero V
+	if d.Len() == 0 {
+		return "", zero, false
+	}
+	if d.isRehashing() {
+		d.rehash(1)
+	}
+
+	var head *entry[V]
+	for head == nil {
+		if d.isRehashing() {
+			s0 := d.ht[0].size()
+			total := s0 - uint64(d.rehashIdx) + d.ht[1].size()
+			i := uint64(d.rehashIdx) + uint64(rand.Int63n(int64(total)))
+			if i < s0 {
+				head = d.ht[0].buckets[i]
+			} else {
+				head = d.ht[1].buckets[i-s0]
+			}
+		} else {
+			head = d.ht[0].buckets[rand.Int63n(int64(d.ht[0].size()))]
+		}
+	}
+
+	chainLen := 0
+	for e := head; e != nil; e = e.next {
+		chainLen++
+	}
+	e := head
+	for k := rand.Intn(chainLen); k > 0; k-- {
+		e = e.next
+	}
+	return e.key, e.value, true
+}
+
+func (d *Dict[V]) expandIfNeeded() {
 	if d.isRehashing() {
 		return
 	}
 	t := d.ht[0]
-	if uint64(t.used) >= t.size() {
+	if uint64(t.used) >= t.size() { 
 		d.startRehash(t.size() * 2)
 	}
 }
 
-func (d *Dict) shrinkIfNeeded() {
+func (d *Dict[V]) shrinkIfNeeded() {
 	if d.isRehashing() {
 		return
 	}
@@ -172,12 +215,12 @@ func nextPowerOfTwo(n uint64) uint64 {
 	return size
 }
 
-func (d *Dict) startRehash(newSize uint64) {
-	d.ht[1] = newTable(newSize)
+func (d *Dict[V]) startRehash(newSize uint64) {
+	d.ht[1] = newTable[V](newSize)
 	d.rehashIdx = 0
 }
 
-func (d *Dict) rehash(n int) bool {
+func (d *Dict[V]) rehash(n int) bool {
 	if !d.isRehashing() {
 		return false
 	}
@@ -209,6 +252,7 @@ func (d *Dict) rehash(n int) bool {
 		d.rehashIdx++
 		n--
 	}
+
 	if old.used == 0 {
 		d.ht[0] = nw
 		d.ht[1] = nil
@@ -217,7 +261,8 @@ func (d *Dict) rehash(n int) bool {
 	}
 	return true
 }
-func (d *Dict) RehashFor(budget time.Duration) {
+
+func (d *Dict[V]) RehashFor(budget time.Duration) {
 	start := time.Now()
 	for d.rehash(100) {
 		if time.Since(start) > budget {
@@ -225,7 +270,8 @@ func (d *Dict) RehashFor(budget time.Duration) {
 		}
 	}
 }
-func (d *Dict) Stats() string {
+
+func (d *Dict[V]) Stats() string {
 	s := fmt.Sprintf("table0: size=%d used=%d", d.ht[0].size(), d.ht[0].used)
 	if d.isRehashing() {
 		s += fmt.Sprintf(" | table1: size=%d used=%d | rehashing, next old bucket=%d",

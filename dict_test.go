@@ -6,7 +6,7 @@ import (
 )
 
 func TestDictSurvivesRehashing(t *testing.T) {
-	d := NewDict()
+	d := NewDict[string]()
 	const n = 100000
 	for i := 0; i < n; i++ {
 		d.Set("key"+strconv.Itoa(i), strconv.Itoa(i))
@@ -26,7 +26,7 @@ func TestDictSurvivesRehashing(t *testing.T) {
 }
 
 func TestDictOverwriteAndDelete(t *testing.T) {
-	d := NewDict()
+	d := NewDict[string]()
 	d.Set("x", "1")
 	d.Set("x", "2")
 	if v, _ := d.Get("x"); v != "2" {
@@ -47,7 +47,7 @@ func TestDictOverwriteAndDelete(t *testing.T) {
 }
 
 func TestDictShrinksAfterDeletes(t *testing.T) {
-	d := NewDict()
+	d := NewDict[string]()
 	const n = 10000
 	for i := 0; i < n; i++ {
 		d.Set("key"+strconv.Itoa(i), "v")
@@ -66,5 +66,31 @@ func TestDictShrinksAfterDeletes(t *testing.T) {
 	}
 	if d.ht[0].size() >= peak {
 		t.Fatalf("table did not shrink: still %d buckets", d.ht[0].size())
+	}
+}
+
+func TestRandomEntryReturnsRealKeys(t *testing.T) {
+	d := NewDict[int]()
+	for i := 0; i < 1000; i++ {
+		d.Set("k"+strconv.Itoa(i), i)
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 5000; i++ {
+		k, v, ok := d.RandomEntry()
+		if !ok {
+			t.Fatal("RandomEntry found nothing in a non-empty dict")
+		}
+		if got, _ := d.Get(k); got != v {
+			t.Fatalf("RandomEntry returned %s=%d, but the dict holds %d", k, v, got)
+		}
+		seen[k] = true
+	}
+	if len(seen) < 500 {
+		t.Fatalf("sampling looks stuck: only %d distinct keys in 5000 draws", len(seen))
+	}
+
+	empty := NewDict[int]()
+	if _, _, ok := empty.RandomEntry(); ok {
+		t.Fatal("RandomEntry on an empty dict should return ok=false")
 	}
 }

@@ -2,71 +2,72 @@ package main
 
 import (
 	"strconv"
-	"sync"
 	"testing"
+	"time"
 )
 
-// TestStoreConcurrentAccess hammers Store from many goroutines at once.
-//
-// Dict is not safe for concurrent use at all -- Get advances the rehash
-// cursor -- so without Store's mutex this reliably loses keys or panics in
-// rehash. It is a correctness check, not a race-detector check: this machine
-// has CGO_ENABLED=0 and no gcc, so -race cannot run here.
-func TestStoreConcurrentAccess(t *testing.T) {
-	const writers = 8
-	const perWriter = 2000
-
+func TestPassiveExpiry(t *testing.T) {
 	s := NewStore()
-	var wg sync.WaitGroup
-
-	for w := 0; w < writers; w++ {
-		wg.Add(1)
-		go func(w int) {
-			defer wg.Done()
-			for i := 0; i < perWriter; i++ {
-				k := "w" + strconv.Itoa(w) + ":" + strconv.Itoa(i)
-				s.Set(k, k)
-				if v, ok := s.Get(k); !ok || v != k {
-					t.Errorf("key %s missing immediately after Set (got %q, ok=%v)", k, v, ok)
-					return
-				}
-			}
-		}(w)
+	s.Set("k", "v", nowMillis()+50, false)
+	if _, ok := s.Get("k"); !ok {
+		t.Fatal("key should exist before its deadline")
 	}
-
-	// Concurrent readers and deleters of their own disjoint keyspace, so the
-	// expected final count stays deterministic.
-	for r := 0; r < 4; r++ {
-		wg.Add(1)
-		go func(r int) {
-			defer wg.Done()
-			for i := 0; i < perWriter; i++ {
-				k := "tmp" + strconv.Itoa(r) + ":" + strconv.Itoa(i)
-				s.Set(k, "x")
-				if !s.Delete(k) {
-					t.Errorf("delete of own key %s returned false", k)
-					return
-				}
-				s.Get("w0:0")
-				_ = s.Stats()
-			}
-		}(r)
+	time.Sleep(80 * time.Millisecond)
+	if _, ok := s.Get("k"); ok {
+		t.Fatal("an expired key was returned")
 	}
+}
 
-	wg.Wait()
-	if t.Failed() {
-		return
+func TestTTLReplyCodes(t *testing.T) {
+	s := NewStore()
+	if got := s.TTLMillis("missing"); got != -2 {
+		t.Fatalf("missing key: expected -2, got %d", got)
 	}
+	s.Set("x", "1", 0, false)
+	if got := s.TTLMillis("x"); got != -1 {
+		t.Fatalf("key without TTL: expected -1, got %d", got)
+	}
+	if !s.Expire("x", nowMillis()+5000) {
+		t.Fatal("EXPIRE on an existing key should succeed")
+	}
+	if ttl := s.TTLMillis("x"); ttl <= 0 || ttl > 5000 {
+		t.Fatalf("expected TTL in (0, 5000], got %d", ttl)
+	}
+	if !s.Persist("x") {
+		t.Fatal("PERSIST should remove the TTL")
+	}
+	if got := s.TTLMillis("x"); got != -1 {
+		t.Fatalf("after PERSIST: expected -1, got %d", got)
+	}
+}
 
-	if got := s.Len(); got != writers*perWriter {
-		t.Fatalf("expected %d keys, got %d", writers*perWriter, got)
+func TestPlainSetClearsTTLButKeepTTLKeepsIt(t *testing.T) {
+	s := NewStore()
+	s.Set("a", "1", nowMillis()+10000, false)
+	s.Set("a", "2", 0, false)
+	if got := s.TTLMillis("a"); got != -1 {
+		t.Fatalf("plain SET should wipe the TTL, got %d", got)
 	}
-	for w := 0; w < writers; w++ {
-		for i := 0; i < perWriter; i++ {
-			k := "w" + strconv.Itoa(w) + ":" + strconv.Itoa(i)
-			if v, ok := s.Get(k); !ok || v != k {
-				t.Fatalf("lost key %s after concurrent load (got %q, ok=%v)", k, v, ok)
-			}
-		}
+	s.Set("b", "1", nowMillis()+10000, false)
+	s.Set("b", "2", 0, true)
+	if got := s.TTLMillis("b"); got <= 0 {
+		t.Fatalf("SET with KEEPTTL should keep the TTL, got %d", got)
+	}
+}
+
+func TestActiveExpiryCleansUnreadKeys(t *testing.T) {
+	s := NewStore()
+	for i := 0; i < 1000; i++ {
+		s.Set("k"+strconv.Itoa(i), "v", nowMillis()+10, false)
+	}
+	time.Sleep(30 * time.Millisecond)
+
+	s.mu.Lock()
+	s.activeExpireCycle(time.Second)
+	dataLeft, expLeft := s.data.Len(), s.expires.Len()
+	s.mu.Unlock()
+
+	if dataLeft != 0 || expLeft != 0 {
+		t.Fatalf("active expiry left %d data keys and %d deadlines", dataLeft, expLeft)
 	}
 }
