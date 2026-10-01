@@ -39,6 +39,24 @@ func executeCommand(store *Store, args []string) string {
 		}
 		return bulkString(value)
 
+	case "DEL":
+		if len(args) < 2 {
+			return errorReply("ERR wrong number of arguments for 'del' command")
+		}
+		deleted := 0
+		for _, key := range args[1:] {
+			if store.Delete(key) {
+				deleted++
+			}
+		}
+		return integerReply(deleted)
+
+	case "HTSTATS":
+		if len(args) != 1 {
+			return errorReply("ERR wrong number of arguments for 'htstats' command")
+		}
+		return bulkString(store.Stats())
+
 	default:
 		return errorReply(fmt.Sprintf("ERR unknown command '%s'", args[0]))
 	}

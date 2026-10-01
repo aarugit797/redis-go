@@ -9,10 +9,9 @@ import (
 )
 
 const (
-	maxArgs    = 1024 * 1024       
-	maxBulkLen = 512 * 1024 * 1024 
+	maxArgs    = 1024 * 1024
+	maxBulkLen = 512 * 1024 * 1024
 )
-
 
 func parseRESP(reader *bufio.Reader) ([]string, error) {
 	line, err := reader.ReadString('\n')
@@ -60,8 +59,6 @@ func parseRESP(reader *bufio.Reader) ([]string, error) {
 	return args, nil
 }
 
-
-
 func simpleString(s string) string {
 	return "+" + s + "\r\n"
 }
@@ -76,4 +73,8 @@ func bulkString(s string) string {
 
 func nullBulkString() string {
 	return "$-1\r\n"
+}
+
+func integerReply(n int) string {
+	return ":" + strconv.Itoa(n) + "\r\n"
 }

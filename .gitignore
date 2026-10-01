@@ -1,1 +1,8 @@
-go.mod
+# Compiled binaries (go build drops these in the module root)
+*.exe
+*.exe~
+*.dll
+*.test
+
+# Test and coverage output
+*.out
