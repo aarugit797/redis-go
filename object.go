@@ -8,6 +8,7 @@ const (
 	TypeString ObjType = iota
 	TypeList
 	TypeHash
+	TypeSet
 )
 
 func (t ObjType) String() string {
@@ -16,8 +17,10 @@ func (t ObjType) String() string {
 		return "string"
 	case TypeList:
 		return "list"
-	default:
+	case TypeHash:
 		return "hash"
+	default:
+		return "set"
 	}
 }
 
@@ -31,6 +34,9 @@ const (
 	listMaxBlockBytes      = 8 * 1024
 	hashMaxListpackEntries = 128
 	hashMaxListpackValue   = 64
+	setMaxIntsetEntries    = 512
+	setMaxListpackEntries  = 128
+	setMaxListpackValue    = 64
 )
 
 const wrongTypeErr = "WRONGTYPE Operation against a key holding the wrong kind of value"
@@ -48,6 +54,8 @@ func (o *Object) Encoding() string {
 	case *List:
 		return v.Encoding()
 	case *Hash:
+		return v.Encoding()
+	case *Set:
 		return v.Encoding()
 	}
 	return "unknown"

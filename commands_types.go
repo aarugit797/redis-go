@@ -178,3 +178,68 @@ func cmdHGetAll(s *Store, args []string) string {
 	}
 	return arrayReply(h.All())
 }
+
+func cmdSAdd(s *Store, args []string) string {
+	set, _, errR := getOrCreate(s, args[1], TypeSet, true, NewSet)
+	if errR != "" {
+		return errR
+	}
+	added := 0
+	for _, m := range args[2:] {
+		if set.Add(m) {
+			added++
+		}
+	}
+	return integerReply(added)
+}
+
+func cmdSRem(s *Store, args []string) string {
+	set, ok, errR := getOrCreate(s, args[1], TypeSet, false, NewSet)
+	if errR != "" {
+		return errR
+	}
+	if !ok {
+		return integerReply(0)
+	}
+	removed := 0
+	for _, m := range args[2:] {
+		if set.Remove(m) {
+			removed++
+		}
+	}
+	dropIfEmpty(s, args[1], set.Card())
+	return integerReply(removed)
+}
+
+func cmdSIsMember(s *Store, args []string) string {
+	set, ok, errR := getOrCreate(s, args[1], TypeSet, false, NewSet)
+	if errR != "" {
+		return errR
+	}
+	if ok && set.IsMember(args[2]) {
+		return integerReply(1)
+	}
+	return integerReply(0)
+}
+
+func cmdSCard(s *Store, args []string) string {
+	set, ok, errR := getOrCreate(s, args[1], TypeSet, false, NewSet)
+	if errR != "" {
+		return errR
+	}
+	if !ok {
+		return integerReply(0)
+	}
+	return integerReply(set.Card())
+}
+
+func cmdSMembers(s *Store, args []string) string {
+	set, ok, errR := getOrCreate(s, args[1], TypeSet, false, NewSet)
+	if errR != "" {
+		return errR
+	}
+	if !ok {
+		return arrayReply(nil)
+	}
+	return arrayReply(set.Members())
+}

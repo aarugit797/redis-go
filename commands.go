@@ -48,6 +48,12 @@ func init() {
 		"HDEL":    {fn: cmdHDel, arity: -3},
 		"HLEN":    {fn: cmdHLen, arity: 2},
 		"HGETALL": {fn: cmdHGetAll, arity: 2},
+
+		"SADD":      {fn: cmdSAdd, arity: -3},
+		"SREM":      {fn: cmdSRem, arity: -3},
+		"SISMEMBER": {fn: cmdSIsMember, arity: 3},
+		"SCARD":     {fn: cmdSCard, arity: 2},
+		"SMEMBERS":  {fn: cmdSMembers, arity: 2},
 	}
 }
 

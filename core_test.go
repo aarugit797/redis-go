@@ -128,6 +128,11 @@ func TestEncodingsChange(t *testing.T) {
 	check("s", "embstr")
 	check("r", "raw")
 
+	run(s, "SADD ids 1 2 3")
+	check("ids", "intset")
+	run(s, "SADD ids apple")
+	check("ids", "listpack")
+
 	run(s, "HSET h name aaru")
 	check("h", "listpack")
 	run(s, "HSET h bio "+strings.Repeat("x", 80))
