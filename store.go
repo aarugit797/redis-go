@@ -14,7 +14,7 @@ const (
 
 type Store struct {
 	cfg     *Config
-	data    *Dict[string]
+	data    *Dict[*Object]
 	expires *Dict[int64]
 
 	expiredKeys   int64
@@ -22,7 +22,7 @@ type Store struct {
 }
 
 func NewStore(cfg *Config) *Store {
-	return &Store{cfg: cfg, data: NewDict[string](), expires: NewDict[int64]()}
+	return &Store{cfg: cfg, data: NewDict[*Object](), expires: NewDict[int64]()}
 }
 
 func nowMillis() int64 { return time.Now().UnixMilli() }
@@ -37,11 +37,23 @@ func (s *Store) expireIfNeeded(key string) bool {
 	return true
 }
 
-func (s *Store) lookup(key string) (string, bool) {
+func (s *Store) lookup(key string) (*Object, bool) {
 	if s.expireIfNeeded(key) {
-		return "", false
+		return nil, false
 	}
 	return s.data.Get(key)
+}
+
+func (s *Store) lookupType(key string, t ObjType) (obj *Object, found, wrongType bool) {
+	obj, found = s.lookup(key)
+	if found && obj.typ != t {
+		return nil, false, true
+	}
+	return obj, found, false
+}
+
+func (s *Store) addObject(key string, obj *Object) {
+	s.data.Set(key, obj)
 }
 
 func (s *Store) deleteKey(key string) bool {
@@ -50,7 +62,7 @@ func (s *Store) deleteKey(key string) bool {
 }
 
 func (s *Store) flushAll() {
-	s.data = NewDict[string]()
+	s.data = NewDict[*Object]()
 	s.expires = NewDict[int64]()
 }
 

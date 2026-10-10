@@ -66,3 +66,12 @@ func bulkString(s string) string {
 }
 
 func nullBulkString() string { return "$-1\r\n" }
+
+func arrayReply(items []string) string {
+	var b strings.Builder
+	b.WriteString("*" + strconv.Itoa(len(items)) + "\r\n")
+	for _, item := range items {
+		b.WriteString(bulkString(item))
+	}
+	return b.String()
+}

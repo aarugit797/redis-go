@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -111,5 +112,48 @@ func TestTTLCodesAndKeepTTL(t *testing.T) {
 	}
 	if run(s, "SET x 3", "TTL x") != integerReply(-1) {
 		t.Fatal("plain SET should wipe the TTL")
+	}
+}
+
+func TestEncodingsChange(t *testing.T) {
+	s := newTestStore(t)
+	check := func(key, want string) {
+		t.Helper()
+		if got := run(s, "OBJECT ENCODING "+key); got != bulkString(want) {
+			t.Fatalf("encoding of %s = %q, want %s", key, got, want)
+		}
+	}
+	run(s, "SET n 42", "SET s hello", "SET r "+strings.Repeat("x", 45))
+	check("n", "int")
+	check("s", "embstr")
+	check("r", "raw")
+
+	for i := 0; i < 3000; i++ {
+		run(s, "RPUSH q item"+strconv.Itoa(i))
+	}
+	check("q", "quicklist")
+	if run(s, "LPUSH n x") != errorReply(wrongTypeErr) {
+		t.Fatal("expected WRONGTYPE")
+	}
+}
+
+func TestListCommands(t *testing.T) {
+	s := newTestStore(t)
+	run(s, "RPUSH l a b c", "LPUSH l z")
+	if got := run(s, "LRANGE l 0 -1"); got != arrayReply([]string{"z", "a", "b", "c"}) {
+		t.Fatalf("LRANGE = %q", got)
+	}
+	if run(s, "LLEN l") != integerReply(4) {
+		t.Fatal("LLEN wrong")
+	}
+	if run(s, "LINDEX l -1") != bulkString("c") {
+		t.Fatal("LINDEX wrong")
+	}
+	run(s, "RPOP l", "RPOP l", "RPOP l", "RPOP l")
+	if run(s, "TYPE l") != simpleString("none") {
+		t.Fatal("empty list should delete its key")
+	}
+	if !reflect.DeepEqual(NewList().Range(0, -1), []string(nil)) {
+		t.Fatal("empty range")
 	}
 }

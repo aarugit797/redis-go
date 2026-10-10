@@ -29,9 +29,19 @@ func init() {
 		"TTL":       {fn: cmdTTL, arity: 2},
 		"PTTL":      {fn: cmdTTL, arity: 2},
 		"PERSIST":   {fn: cmdPersist, arity: 2},
+		"TYPE":      {fn: cmdType, arity: 2},
+		"OBJECT":    {fn: cmdObject, arity: 3},
 		"DBSIZE":    {fn: cmdDBSize, arity: 1},
 		"FLUSHALL":  {fn: cmdFlushAll, arity: -1},
 		"HTSTATS":   {fn: cmdHTStats, arity: 1},
+
+		"LPUSH":  {fn: cmdPush, arity: -3},
+		"RPUSH":  {fn: cmdPush, arity: -3},
+		"LPOP":   {fn: cmdPop, arity: 2},
+		"RPOP":   {fn: cmdPop, arity: 2},
+		"LLEN":   {fn: cmdLLen, arity: 2},
+		"LRANGE": {fn: cmdLRange, arity: 4},
+		"LINDEX": {fn: cmdLIndex, arity: 3},
 	}
 }
 
@@ -93,7 +103,7 @@ func cmdSet(s *Store, args []string) string {
 	}
 
 	s.expireIfNeeded(key)
-	s.data.Set(key, value)
+	s.addObject(key, &Object{typ: TypeString, value: value})
 	switch {
 	case expireAt > 0:
 		s.expires.Set(key, expireAt)
@@ -104,11 +114,32 @@ func cmdSet(s *Store, args []string) string {
 }
 
 func cmdGet(s *Store, args []string) string {
-	value, ok := s.lookup(args[1])
-	if !ok {
+	obj, found, wrong := s.lookupType(args[1], TypeString)
+	switch {
+	case wrong:
+		return errorReply(wrongTypeErr)
+	case !found:
 		return nullBulkString()
 	}
-	return bulkString(value)
+	return bulkString(obj.value.(string))
+}
+
+func cmdType(s *Store, args []string) string {
+	if obj, found := s.lookup(args[1]); found {
+		return simpleString(obj.typ.String())
+	}
+	return simpleString("none")
+}
+
+func cmdObject(s *Store, args []string) string {
+	if strings.ToUpper(args[1]) != "ENCODING" {
+		return errorReply("ERR OBJECT supports ENCODING")
+	}
+	obj, found := s.lookup(args[2])
+	if !found {
+		return nullBulkString()
+	}
+	return bulkString(obj.Encoding())
 }
 
 func cmdDel(s *Store, args []string) string {
@@ -144,7 +175,7 @@ func cmdExpire(s *Store, args []string) string {
 func cmdPExpireAt(s *Store, args []string) string {
 	at, err := strconv.ParseInt(args[2], 10, 64)
 	if err != nil {
-		return errorReply("ERR value is not an integer or out of range")
+		return errorReply(notIntegerErr)
 	}
 	return setDeadline(s, args[1], at)
 }
@@ -191,7 +222,7 @@ func cmdHTStats(s *Store, args []string) string {
 func parseExpireAt(arg string, unitMs int64, cmd string, allowPast bool) (int64, string) {
 	n, err := strconv.ParseInt(arg, 10, 64)
 	if err != nil {
-		return 0, errorReply("ERR value is not an integer or out of range")
+		return 0, errorReply(notIntegerErr)
 	}
 	now := time.Now().UnixMilli()
 	if n <= 0 {
