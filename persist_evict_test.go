@@ -2,7 +2,10 @@ package main
 
 import (
 	"os"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 func fillAllTypes(s *Store) {
@@ -49,5 +52,81 @@ func TestRDBRoundTrip(t *testing.T) {
 	os.WriteFile(s.rdbPath(), data, 0o644)
 	if err := NewStore(s.cfg).loadRDB(s.rdbPath()); err == nil {
 		t.Fatal("corrupted snapshot loaded without error")
+	}
+}
+
+func openAOFStore(t *testing.T, cfg *Config) *Store {
+	t.Helper()
+	s := NewStore(cfg)
+	if err := s.loadData(); err != nil {
+		t.Fatal(err)
+	}
+	aof, err := OpenAOF(s.aofPath(), cfg.AppendFsync)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.aof = aof
+	return s
+}
+
+func TestAOFReplayRewriteAndTruncatedTail(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.SaveRules = nil
+	cfg.Dir = t.TempDir()
+	cfg.AppendOnly = true
+
+	s := openAOFStore(t, cfg)
+	fillAllTypes(s)
+	for i := 0; i < 1000; i++ {
+		run(s, "SET counter "+strconv.Itoa(i))
+	}
+	run(s, "SET gone x EX 1000", "EXPIRE gone 0")
+	s.aof.Flush()
+	s.aof.Close()
+
+	raw, _ := os.ReadFile(s.aofPath())
+	if !strings.Contains(string(raw), "PEXPIREAT") || strings.Contains(string(raw), "EXPIRE\r\n$4\r\ntemp") {
+		t.Fatal("expiry was not logged as PEXPIREAT")
+	}
+
+	s2 := openAOFStore(t, cfg)
+	assertAllTypes(t, s2)
+	if run(s2, "GET counter") != bulkString("999") || run(s2, "GET gone") != nullBulkString() {
+		t.Fatal("replay gave the wrong final state")
+	}
+
+	before, _ := s2.aof.Status()
+	if err := s2.bgrewriteaof(); err != nil {
+		t.Fatal(err)
+	}
+	run(s2, "SET during rewrite")
+	s2.aof.Flush()
+	waitFor(t, func() bool { _, r := s2.aof.Status(); return r == 0 })
+	after, _ := s2.aof.Status()
+	if after >= before {
+		t.Fatalf("rewrite did not shrink the AOF: %d -> %d", before, after)
+	}
+	s2.aof.Close()
+
+	f, _ := os.OpenFile(s.aofPath(), os.O_APPEND|os.O_WRONLY, 0o644)
+	f.WriteString("*3\r\n$3\r\nSET\r\n$4\r\nhalf")
+	f.Close()
+
+	s3 := openAOFStore(t, cfg)
+	defer s3.aof.Close()
+	assertAllTypes(t, s3)
+	if run(s3, "GET during") != bulkString("rewrite") {
+		t.Fatal("a write made during the rewrite was lost")
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

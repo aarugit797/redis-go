@@ -15,10 +15,12 @@ import (
 )
 
 const (
-	rdbMagic    = "GORDB01"
-	rdbOpExpire = 0xFC
-	rdbOpEOF    = 0xFF
-	rdbFileName = "dump.rdb"
+	rdbMagic      = "GORDB01"
+	rdbOpExpire   = 0xFC
+	rdbOpEOF      = 0xFF
+	rdbFileName   = "dump.rdb"
+	aofFileName   = "appendonly.aof"
+	minAOFRewrite = 64 << 20
 )
 
 type rdbWriter struct{ buf bytes.Buffer }
@@ -253,6 +255,7 @@ func writeFileAtomic(path string, data []byte) error {
 }
 
 func (s *Store) rdbPath() string { return filepath.Join(s.cfg.Dir, rdbFileName) }
+func (s *Store) aofPath() string { return filepath.Join(s.cfg.Dir, aofFileName) }
 
 func (s *Store) save() error {
 	if err := writeFileAtomic(s.rdbPath(), s.serializeRDB()); err != nil {
@@ -301,16 +304,38 @@ func (s *Store) persistenceCron() {
 			}
 		}
 	}
+
+	if s.aof != nil && s.aof.NeedsRewrite() {
+		logf("AOF doubled in size, rewriting")
+		s.bgrewriteaof()
+	}
 }
 
 func (s *Store) loadData() error {
-	if !fileExists(s.rdbPath()) {
-		return nil
+	s.loading = true
+	defer func() { s.loading = false }()
+
+	aofExists := fileExists(s.aofPath())
+	rdbExists := fileExists(s.rdbPath())
+	switch {
+	case s.cfg.AppendOnly && aofExists:
+		if err := s.loadAOF(s.aofPath()); err != nil {
+			return fmt.Errorf("loading AOF: %w", err)
+		}
+		logf("loaded %d keys from %s", s.data.Len(), aofFileName)
+	case rdbExists:
+		if err := s.loadRDB(s.rdbPath()); err != nil {
+			return fmt.Errorf("loading snapshot: %w", err)
+		}
+		logf("loaded %d keys from %s", s.data.Len(), rdbFileName)
 	}
-	if err := s.loadRDB(s.rdbPath()); err != nil {
-		return fmt.Errorf("loading snapshot: %w", err)
+
+	if s.cfg.AppendOnly && !aofExists {
+		if err := writeFileAtomic(s.aofPath(), s.rewriteAOFContent()); err != nil {
+			return err
+		}
+		logf("no AOF found: created one from the current data")
 	}
-	logf("loaded %d keys from %s", s.data.Len(), rdbFileName)
 	return nil
 }
 

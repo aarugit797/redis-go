@@ -34,7 +34,7 @@ func parseRESP(reader *bufio.Reader) ([]string, error) {
 	for i := 0; i < count; i++ {
 		lengthLine, err := reader.ReadString('\n')
 		if err != nil {
-			return nil, err
+			return nil, unexpected(err)
 		}
 		if len(lengthLine) < 3 || lengthLine[0] != '$' {
 			return nil, fmt.Errorf("expected bulk string, got %q", lengthLine)
@@ -48,11 +48,18 @@ func parseRESP(reader *bufio.Reader) ([]string, error) {
 		}
 		buf := make([]byte, length+2)
 		if _, err := io.ReadFull(reader, buf); err != nil {
-			return nil, err
+			return nil, unexpected(err)
 		}
 		args[i] = string(buf[:length])
 	}
 	return args, nil
+}
+
+func unexpected(err error) error {
+	if err == io.EOF {
+		return io.ErrUnexpectedEOF
+	}
+	return err
 }
 
 func simpleString(s string) string { return "+" + s + "\r\n" }
@@ -74,4 +81,18 @@ func arrayReply(items []string) string {
 		b.WriteString(bulkString(item))
 	}
 	return b.String()
+}
+
+func appendCommand(dst []byte, args []string) []byte {
+	dst = append(dst, '*')
+	dst = strconv.AppendInt(dst, int64(len(args)), 10)
+	dst = append(dst, '\r', '\n')
+	for _, a := range args {
+		dst = append(dst, '$')
+		dst = strconv.AppendInt(dst, int64(len(a)), 10)
+		dst = append(dst, '\r', '\n')
+		dst = append(dst, a...)
+		dst = append(dst, '\r', '\n')
+	}
+	return dst
 }

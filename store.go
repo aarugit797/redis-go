@@ -17,6 +17,8 @@ type Store struct {
 	data    *Dict[*Object]
 	expires *Dict[int64]
 
+	aof              *AOF
+	loading          bool
 	dirty            int64
 	dirtyAtSaveStart int64
 	lastSave         time.Time
@@ -46,6 +48,7 @@ func (s *Store) expireIfNeeded(key string) bool {
 	}
 	s.deleteKey(key)
 	s.expiredKeys++
+	s.propagate("DEL", key)
 	return true
 }
 
@@ -71,6 +74,16 @@ func (s *Store) addObject(key string, obj *Object) {
 func (s *Store) deleteKey(key string) bool {
 	s.expires.Delete(key)
 	return s.data.Delete(key)
+}
+
+func (s *Store) propagate(args ...string) {
+	if s.loading {
+		return
+	}
+	s.dirty++
+	if s.aof != nil {
+		s.aof.Append(args)
+	}
 }
 
 func (s *Store) flushAll() {
@@ -105,6 +118,7 @@ func (s *Store) activeExpireCycle(budget time.Duration) {
 			if at <= now {
 				s.deleteKey(key)
 				s.expiredKeys++
+				s.propagate("DEL", key)
 				expired++
 			}
 		}

@@ -13,6 +13,10 @@ type handler func(s *Store, args []string) string
 type command struct {
 	fn    handler
 	arity int
+	write bool
+	// selfPropagate: the handler logs its own AOF form (EXPIRE becomes
+	// PEXPIREAT), so the dispatcher must not log the raw command.
+	selfPropagate bool
 }
 
 var commandTable map[string]command
@@ -21,48 +25,49 @@ func init() {
 	commandTable = map[string]command{
 		"PING":      {fn: cmdPing, arity: -1},
 		"ECHO":      {fn: cmdEcho, arity: 2},
-		"SET":       {fn: cmdSet, arity: -3},
+		"SET":       {fn: cmdSet, arity: -3, write: true, selfPropagate: true},
 		"GET":       {fn: cmdGet, arity: 2},
-		"DEL":       {fn: cmdDel, arity: -2},
-		"EXPIRE":    {fn: cmdExpire, arity: 3},
-		"PEXPIREAT": {fn: cmdPExpireAt, arity: 3},
+		"DEL":       {fn: cmdDel, arity: -2, write: true},
+		"EXPIRE":    {fn: cmdExpire, arity: 3, write: true, selfPropagate: true},
+		"PEXPIREAT": {fn: cmdPExpireAt, arity: 3, write: true, selfPropagate: true},
 		"TTL":       {fn: cmdTTL, arity: 2},
 		"PTTL":      {fn: cmdTTL, arity: 2},
-		"PERSIST":   {fn: cmdPersist, arity: 2},
+		"PERSIST":   {fn: cmdPersist, arity: 2, write: true},
 		"TYPE":      {fn: cmdType, arity: 2},
 		"OBJECT":    {fn: cmdObject, arity: 3},
 		"DBSIZE":    {fn: cmdDBSize, arity: 1},
-		"FLUSHALL":  {fn: cmdFlushAll, arity: -1},
+		"FLUSHALL":  {fn: cmdFlushAll, arity: -1, write: true},
 		"HTSTATS":   {fn: cmdHTStats, arity: 1},
 
-		"SAVE":     {fn: cmdSave, arity: 1},
-		"BGSAVE":   {fn: cmdBgsave, arity: 1},
-		"LASTSAVE": {fn: cmdLastSave, arity: 1},
+		"SAVE":         {fn: cmdSave, arity: 1},
+		"BGSAVE":       {fn: cmdBgsave, arity: 1},
+		"LASTSAVE":     {fn: cmdLastSave, arity: 1},
+		"BGREWRITEAOF": {fn: cmdBgrewriteaof, arity: 1},
 
-		"LPUSH":  {fn: cmdPush, arity: -3},
-		"RPUSH":  {fn: cmdPush, arity: -3},
-		"LPOP":   {fn: cmdPop, arity: 2},
-		"RPOP":   {fn: cmdPop, arity: 2},
+		"LPUSH":  {fn: cmdPush, arity: -3, write: true},
+		"RPUSH":  {fn: cmdPush, arity: -3, write: true},
+		"LPOP":   {fn: cmdPop, arity: 2, write: true},
+		"RPOP":   {fn: cmdPop, arity: 2, write: true},
 		"LLEN":   {fn: cmdLLen, arity: 2},
 		"LRANGE": {fn: cmdLRange, arity: 4},
 		"LINDEX": {fn: cmdLIndex, arity: 3},
 
-		"HSET":    {fn: cmdHSet, arity: -4},
+		"HSET":    {fn: cmdHSet, arity: -4, write: true},
 		"HGET":    {fn: cmdHGet, arity: 3},
-		"HDEL":    {fn: cmdHDel, arity: -3},
+		"HDEL":    {fn: cmdHDel, arity: -3, write: true},
 		"HLEN":    {fn: cmdHLen, arity: 2},
 		"HGETALL": {fn: cmdHGetAll, arity: 2},
 
-		"SADD":      {fn: cmdSAdd, arity: -3},
-		"SREM":      {fn: cmdSRem, arity: -3},
+		"SADD":      {fn: cmdSAdd, arity: -3, write: true},
+		"SREM":      {fn: cmdSRem, arity: -3, write: true},
 		"SISMEMBER": {fn: cmdSIsMember, arity: 3},
 		"SCARD":     {fn: cmdSCard, arity: 2},
 		"SMEMBERS":  {fn: cmdSMembers, arity: 2},
 
-		"ZADD":          {fn: cmdZAdd, arity: -4},
+		"ZADD":          {fn: cmdZAdd, arity: -4, write: true},
 		"ZSCORE":        {fn: cmdZScore, arity: 3},
 		"ZRANK":         {fn: cmdZRank, arity: 3},
-		"ZREM":          {fn: cmdZRem, arity: -3},
+		"ZREM":          {fn: cmdZRem, arity: -3, write: true},
 		"ZCARD":         {fn: cmdZCard, arity: 2},
 		"ZRANGE":        {fn: cmdZRange, arity: -4},
 		"ZRANGEBYSCORE": {fn: cmdZRangeByScore, arity: -4},
@@ -82,7 +87,13 @@ func executeCommand(s *Store, args []string) string {
 		return wrongArgs(name)
 	}
 	s.totalCommands++
-	return cmd.fn(s, args)
+
+	reply := cmd.fn(s, args)
+
+	if cmd.write && !strings.HasPrefix(reply, "-") && !cmd.selfPropagate {
+		s.propagate(args...)
+	}
+	return reply
 }
 
 func wrongArgs(command string) string {
@@ -134,6 +145,15 @@ func cmdSet(s *Store, args []string) string {
 	case !keepTTL:
 		s.expires.Delete(key)
 	}
+
+	if keepTTL {
+		s.propagate("SET", key, value, "KEEPTTL")
+	} else {
+		s.propagate("SET", key, value)
+	}
+	if expireAt > 0 {
+		s.propagate("PEXPIREAT", key, strconv.FormatInt(expireAt, 10))
+	}
 	return simpleString("OK")
 }
 
@@ -182,9 +202,11 @@ func setDeadline(s *Store, key string, at int64) string {
 	}
 	if at <= nowMillis() {
 		s.deleteKey(key)
+		s.propagate("DEL", key)
 		return integerReply(1)
 	}
 	s.expires.Set(key, at)
+	s.propagate("PEXPIREAT", key, strconv.FormatInt(at, 10))
 	return integerReply(1)
 }
 
@@ -279,3 +301,10 @@ func cmdBgsave(s *Store, args []string) string {
 }
 
 func cmdLastSave(s *Store, args []string) string { return integerReply(int(s.lastSave.Unix())) }
+
+func cmdBgrewriteaof(s *Store, args []string) string {
+	if err := s.bgrewriteaof(); err != nil {
+		return errorReply("ERR " + err.Error())
+	}
+	return simpleString("Background append only file rewriting started")
+}

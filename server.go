@@ -47,6 +47,11 @@ func (srv *Server) runBatch(req *batchRequest) {
 	for _, args := range req.commands {
 		req.replies = append(req.replies, safeExecute(srv.store, args))
 	}
+	if srv.store.aof != nil {
+		if err := srv.store.aof.Flush(); err != nil {
+			logf("AOF write failed: %v", err)
+		}
+	}
 }
 
 func (srv *Server) execute(req *batchRequest) {

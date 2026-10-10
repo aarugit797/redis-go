@@ -1,4 +1,5 @@
 redis-go
 dump.rdb
+appendonly.aof
 *.tmp
 *.exe

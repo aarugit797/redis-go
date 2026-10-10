@@ -15,14 +15,17 @@ type Config struct {
 	Port int
 	Dir  string
 
-	SaveRules []saveRule
+	AppendOnly  bool
+	AppendFsync string
+	SaveRules   []saveRule
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		Port:      6380,
-		Dir:       ".",
-		SaveRules: []saveRule{{3600, 1}, {300, 100}, {60, 10000}},
+		Port:        6380,
+		Dir:         ".",
+		AppendFsync: "everysec",
+		SaveRules:   []saveRule{{3600, 1}, {300, 100}, {60, 10000}},
 	}
 }
 
