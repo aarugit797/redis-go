@@ -30,6 +30,10 @@ func (t ObjType) String() string {
 type Object struct {
 	typ   ObjType
 	value any
+
+	lru uint32
+
+	size int
 }
 
 const (
@@ -74,4 +78,44 @@ func parseCanonicalInt(s string) (int64, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+func roundAlloc(n int) int {
+	classes := []int{8, 16, 32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448, 512}
+	for _, c := range classes {
+		if n <= c {
+			return c
+		}
+	}
+	return (n + 63) / 64 * 64
+}
+
+func stringValueSize(v string) int {
+	if n, ok := parseCanonicalInt(v); ok {
+		if n >= 0 && n < 10000 {
+			return 0
+		}
+		return 16
+	}
+	if len(v) <= embstrMaxLen {
+		return roundAlloc(16 + 3 + len(v) + 1)
+	}
+	return 16 + roundAlloc(3+len(v)+1)
+}
+
+func estimateKeySize(key string, o *Object) int {
+	n := 12 + 32 + roundAlloc(3+len(key)+1)
+	switch v := o.value.(type) {
+	case string:
+		n += stringValueSize(v)
+	case *List:
+		n += 16 + v.Mem()
+	case *Hash:
+		n += 16 + v.Mem()
+	case *Set:
+		n += 16 + v.Mem()
+	case *ZSet:
+		n += 16 + v.Mem()
+	}
+	return n
 }

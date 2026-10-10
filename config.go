@@ -18,15 +18,51 @@ type Config struct {
 	AppendOnly  bool
 	AppendFsync string
 	SaveRules   []saveRule
+
+	MaxMemory       int64
+	MaxMemoryPolicy string
+	MaxMemorySample int
+	LFULogFactor    int
+	LFUDecayTime    int
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		Port:        6380,
-		Dir:         ".",
-		AppendFsync: "everysec",
-		SaveRules:   []saveRule{{3600, 1}, {300, 100}, {60, 10000}},
+		Port:            6380,
+		Dir:             ".",
+		AppendFsync:     "everysec",
+		SaveRules:       []saveRule{{3600, 1}, {300, 100}, {60, 10000}},
+		MaxMemoryPolicy: "noeviction",
+		MaxMemorySample: 5,
+		LFULogFactor:    10,
+		LFUDecayTime:    1,
 	}
+}
+
+var validPolicies = map[string]bool{
+	"noeviction": true, "allkeys-lru": true, "volatile-lru": true,
+	"allkeys-lfu": true, "volatile-lfu": true, "allkeys-random": true,
+	"volatile-random": true, "volatile-ttl": true,
+}
+
+func parseMemory(s string) (int64, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	mult := int64(1)
+	for _, u := range []struct {
+		suffix string
+		m      int64
+	}{{"gb", 1 << 30}, {"mb", 1 << 20}, {"kb", 1 << 10}, {"b", 1}} {
+		if strings.HasSuffix(s, u.suffix) {
+			mult = u.m
+			s = strings.TrimSuffix(s, u.suffix)
+			break
+		}
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid memory size %q", s)
+	}
+	return n * mult, nil
 }
 
 func parseSaveRules(s string) ([]saveRule, error) {

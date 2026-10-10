@@ -130,3 +130,84 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestMaxmemoryNoevictionRefusesWrites(t *testing.T) {
+	s := newTestStore(t)
+	s.cfg.MaxMemory = 20000
+	var reply string
+	for i := 0; i < 1000 && !strings.HasPrefix(reply, "-OOM"); i++ {
+		reply = run(s, "SET key"+strconv.Itoa(i)+" value")
+	}
+	if !strings.HasPrefix(reply, "-OOM") {
+		t.Fatal("expected OOM error")
+	}
+	if run(s, "GET key0") != bulkString("value") {
+		t.Fatal("reads must still work over maxmemory")
+	}
+}
+
+func TestApproximateLRUKeepsHotKeys(t *testing.T) {
+	s := newTestStore(t)
+	s.cfg.MaxMemoryPolicy = "allkeys-lru"
+	s.cfg.MaxMemorySample = 10
+	for i := 0; i < 2000; i++ {
+		run(s, "SET key"+strconv.Itoa(i)+" value")
+	}
+
+	for i := 0; i < 2000; i++ {
+		obj, _ := s.data.Get("key" + strconv.Itoa(i))
+		if i >= 200 {
+			obj.lru = s.lruClock - 3600
+		}
+	}
+	s.cfg.MaxMemory = s.usedMemory / 2
+	run(s, "SET trigger x")
+
+	if s.usedMemory > s.cfg.MaxMemory+200 {
+		t.Fatalf("still over maxmemory: %d > %d", s.usedMemory, s.cfg.MaxMemory)
+	}
+	hotLeft := 0
+	for i := 0; i < 200; i++ {
+		if _, ok := s.data.Get("key" + strconv.Itoa(i)); ok {
+			hotLeft++
+		}
+	}
+	if hotLeft < 190 || s.evictedKeys == 0 {
+		t.Fatalf("approximate LRU evicted hot keys: %d of 200 hot keys left", hotLeft)
+	}
+}
+
+func TestVolatileWithoutTTLKeysCannotEvict(t *testing.T) {
+	s := newTestStore(t)
+	s.cfg.MaxMemoryPolicy = "volatile-lru"
+	s.cfg.MaxMemory = 5000
+	var reply string
+	for i := 0; i < 500 && !strings.HasPrefix(reply, "-OOM"); i++ {
+		reply = run(s, "SET key"+strconv.Itoa(i)+" value")
+	}
+	if !strings.HasPrefix(reply, "-OOM") {
+		t.Fatal("volatile policy with no TTL keys should behave like noeviction")
+	}
+}
+
+func TestLFUCounterIsLogarithmicAndDecays(t *testing.T) {
+	s := newTestStore(t)
+	s.cfg.MaxMemoryPolicy = "allkeys-lfu"
+	run(s, "SET hot x", "SET cold x")
+	for i := 0; i < 100000; i++ {
+		run(s, "GET hot")
+	}
+	hot := run(s, "OBJECT FREQ hot")
+	n, _ := strconv.Atoi(strings.Trim(hot, ":\r\n"))
+	if n < 100 || n > 200 {
+		t.Fatalf("100k hits gave counter %d, expected roughly 140", n)
+	}
+
+	obj, _ := s.data.Get("hot")
+	ldt := obj.lru >> 8
+	counter := obj.lru & 0xFF
+	obj.lru = (ldt-30)<<8 | counter
+	if got := s.lfuDecayed(obj); got != counter-30 {
+		t.Fatalf("decayed counter %d, want %d", got, counter-30)
+	}
+}

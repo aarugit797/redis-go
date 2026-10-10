@@ -166,6 +166,7 @@ func (s *Store) loadRDB(path string) error {
 		if expireAt != 0 {
 			s.expires.Set(key, expireAt)
 		}
+		s.refreshSize(key)
 	}
 }
 
@@ -331,6 +332,7 @@ func (s *Store) loadData() error {
 	}
 
 	if s.cfg.AppendOnly && !aofExists {
+
 		if err := writeFileAtomic(s.aofPath(), s.rewriteAOFContent()); err != nil {
 			return err
 		}

@@ -13,9 +13,11 @@ type handler func(s *Store, args []string) string
 type command struct {
 	fn    handler
 	arity int
+
 	write bool
-	// selfPropagate: the handler logs its own AOF form (EXPIRE becomes
-	// PEXPIREAT), so the dispatcher must not log the raw command.
+
+	denyoom bool
+
 	selfPropagate bool
 }
 
@@ -25,7 +27,7 @@ func init() {
 	commandTable = map[string]command{
 		"PING":      {fn: cmdPing, arity: -1},
 		"ECHO":      {fn: cmdEcho, arity: 2},
-		"SET":       {fn: cmdSet, arity: -3, write: true, selfPropagate: true},
+		"SET":       {fn: cmdSet, arity: -3, write: true, denyoom: true, selfPropagate: true},
 		"GET":       {fn: cmdGet, arity: 2},
 		"DEL":       {fn: cmdDel, arity: -2, write: true},
 		"EXPIRE":    {fn: cmdExpire, arity: 3, write: true, selfPropagate: true},
@@ -41,30 +43,30 @@ func init() {
 
 		"SAVE":         {fn: cmdSave, arity: 1},
 		"BGSAVE":       {fn: cmdBgsave, arity: 1},
-		"LASTSAVE":     {fn: cmdLastSave, arity: 1},
 		"BGREWRITEAOF": {fn: cmdBgrewriteaof, arity: 1},
+		"LASTSAVE":     {fn: cmdLastSave, arity: 1},
 
-		"LPUSH":  {fn: cmdPush, arity: -3, write: true},
-		"RPUSH":  {fn: cmdPush, arity: -3, write: true},
+		"LPUSH":  {fn: cmdPush, arity: -3, write: true, denyoom: true},
+		"RPUSH":  {fn: cmdPush, arity: -3, write: true, denyoom: true},
 		"LPOP":   {fn: cmdPop, arity: 2, write: true},
 		"RPOP":   {fn: cmdPop, arity: 2, write: true},
 		"LLEN":   {fn: cmdLLen, arity: 2},
 		"LRANGE": {fn: cmdLRange, arity: 4},
 		"LINDEX": {fn: cmdLIndex, arity: 3},
 
-		"HSET":    {fn: cmdHSet, arity: -4, write: true},
+		"HSET":    {fn: cmdHSet, arity: -4, write: true, denyoom: true},
 		"HGET":    {fn: cmdHGet, arity: 3},
 		"HDEL":    {fn: cmdHDel, arity: -3, write: true},
 		"HLEN":    {fn: cmdHLen, arity: 2},
 		"HGETALL": {fn: cmdHGetAll, arity: 2},
 
-		"SADD":      {fn: cmdSAdd, arity: -3, write: true},
+		"SADD":      {fn: cmdSAdd, arity: -3, write: true, denyoom: true},
 		"SREM":      {fn: cmdSRem, arity: -3, write: true},
 		"SISMEMBER": {fn: cmdSIsMember, arity: 3},
 		"SCARD":     {fn: cmdSCard, arity: 2},
 		"SMEMBERS":  {fn: cmdSMembers, arity: 2},
 
-		"ZADD":          {fn: cmdZAdd, arity: -4, write: true},
+		"ZADD":          {fn: cmdZAdd, arity: -4, write: true, denyoom: true},
 		"ZSCORE":        {fn: cmdZScore, arity: 3},
 		"ZRANK":         {fn: cmdZRank, arity: 3},
 		"ZREM":          {fn: cmdZRem, arity: -3, write: true},
@@ -88,10 +90,19 @@ func executeCommand(s *Store, args []string) string {
 	}
 	s.totalCommands++
 
+	if !s.loading && s.cfg.MaxMemory > 0 && !s.freeMemoryIfNeeded() && cmd.denyoom {
+		return errorReply("OOM command not allowed when used memory > 'maxmemory'.")
+	}
+
 	reply := cmd.fn(s, args)
 
-	if cmd.write && !strings.HasPrefix(reply, "-") && !cmd.selfPropagate {
-		s.propagate(args...)
+	if cmd.write && !strings.HasPrefix(reply, "-") {
+		if !cmd.selfPropagate {
+			s.propagate(args...)
+		}
+		if len(args) > 1 {
+			s.refreshSize(args[1])
+		}
 	}
 	return reply
 }
@@ -138,6 +149,9 @@ func cmdSet(s *Store, args []string) string {
 	}
 
 	s.expireIfNeeded(key)
+	if old, ok := s.data.Get(key); ok {
+		s.usedMemory -= int64(old.size)
+	}
 	s.addObject(key, &Object{typ: TypeString, value: value})
 	switch {
 	case expireAt > 0:
@@ -166,24 +180,6 @@ func cmdGet(s *Store, args []string) string {
 		return nullBulkString()
 	}
 	return bulkString(obj.value.(string))
-}
-
-func cmdType(s *Store, args []string) string {
-	if obj, found := s.lookup(args[1]); found {
-		return simpleString(obj.typ.String())
-	}
-	return simpleString("none")
-}
-
-func cmdObject(s *Store, args []string) string {
-	if strings.ToUpper(args[1]) != "ENCODING" {
-		return errorReply("ERR OBJECT supports ENCODING")
-	}
-	obj, found := s.lookup(args[2])
-	if !found {
-		return nullBulkString()
-	}
-	return bulkString(obj.Encoding())
 }
 
 func cmdDel(s *Store, args []string) string {
@@ -254,6 +250,36 @@ func cmdPersist(s *Store, args []string) string {
 	return integerReply(0)
 }
 
+func cmdType(s *Store, args []string) string {
+	if obj, found := s.lookupNoTouch(args[1]); found {
+		return simpleString(obj.typ.String())
+	}
+	return simpleString("none")
+}
+
+func cmdObject(s *Store, args []string) string {
+	sub := strings.ToUpper(args[1])
+	obj, found := s.lookupNoTouch(args[2])
+	if !found {
+		return nullBulkString()
+	}
+	switch sub {
+	case "ENCODING":
+		return bulkString(obj.Encoding())
+	case "IDLETIME":
+		if s.lfuMode() {
+			return errorReply("ERR An LFU maxmemory policy is selected, idle time not tracked.")
+		}
+		return integerReply(int(s.idleSeconds(obj)))
+	case "FREQ":
+		if !s.lfuMode() {
+			return errorReply("ERR An LFU maxmemory policy is not selected, access frequency not tracked.")
+		}
+		return integerReply(int(s.lfuDecayed(obj)))
+	}
+	return errorReply("ERR OBJECT supports ENCODING, IDLETIME and FREQ")
+}
+
 func cmdDBSize(s *Store, args []string) string { return integerReply(s.data.Len()) }
 
 func cmdFlushAll(s *Store, args []string) string {
@@ -263,24 +289,6 @@ func cmdFlushAll(s *Store, args []string) string {
 
 func cmdHTStats(s *Store, args []string) string {
 	return bulkString("data -> " + s.data.Stats() + " || expires -> " + s.expires.Stats())
-}
-
-func parseExpireAt(arg string, unitMs int64, cmd string, allowPast bool) (int64, string) {
-	n, err := strconv.ParseInt(arg, 10, 64)
-	if err != nil {
-		return 0, errorReply(notIntegerErr)
-	}
-	now := time.Now().UnixMilli()
-	if n <= 0 {
-		if allowPast {
-			return now, ""
-		}
-		return 0, errorReply(fmt.Sprintf("ERR invalid expire time in '%s' command", cmd))
-	}
-	if n > (math.MaxInt64-now)/unitMs {
-		return 0, errorReply(fmt.Sprintf("ERR invalid expire time in '%s' command", cmd))
-	}
-	return now + n*unitMs, ""
 }
 
 func cmdSave(s *Store, args []string) string {
@@ -300,11 +308,29 @@ func cmdBgsave(s *Store, args []string) string {
 	return simpleString("Background saving started")
 }
 
-func cmdLastSave(s *Store, args []string) string { return integerReply(int(s.lastSave.Unix())) }
-
 func cmdBgrewriteaof(s *Store, args []string) string {
 	if err := s.bgrewriteaof(); err != nil {
 		return errorReply("ERR " + err.Error())
 	}
 	return simpleString("Background append only file rewriting started")
+}
+
+func cmdLastSave(s *Store, args []string) string { return integerReply(int(s.lastSave.Unix())) }
+
+func parseExpireAt(arg string, unitMs int64, cmd string, allowPast bool) (int64, string) {
+	n, err := strconv.ParseInt(arg, 10, 64)
+	if err != nil {
+		return 0, errorReply(notIntegerErr)
+	}
+	now := time.Now().UnixMilli()
+	if n <= 0 {
+		if allowPast {
+			return now, ""
+		}
+		return 0, errorReply(fmt.Sprintf("ERR invalid expire time in '%s' command", cmd))
+	}
+	if n > (math.MaxInt64-now)/unitMs {
+		return 0, errorReply(fmt.Sprintf("ERR invalid expire time in '%s' command", cmd))
+	}
+	return now + n*unitMs, ""
 }
