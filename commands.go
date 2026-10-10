@@ -42,6 +42,12 @@ func init() {
 		"LLEN":   {fn: cmdLLen, arity: 2},
 		"LRANGE": {fn: cmdLRange, arity: 4},
 		"LINDEX": {fn: cmdLIndex, arity: 3},
+
+		"HSET":    {fn: cmdHSet, arity: -4},
+		"HGET":    {fn: cmdHGet, arity: 3},
+		"HDEL":    {fn: cmdHDel, arity: -3},
+		"HLEN":    {fn: cmdHLen, arity: 2},
+		"HGETALL": {fn: cmdHGetAll, arity: 2},
 	}
 }
 

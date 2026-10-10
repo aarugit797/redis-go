@@ -128,6 +128,13 @@ func TestEncodingsChange(t *testing.T) {
 	check("s", "embstr")
 	check("r", "raw")
 
+	run(s, "HSET h name aaru")
+	check("h", "listpack")
+	run(s, "HSET h bio "+strings.Repeat("x", 80))
+	check("h", "hashtable")
+	run(s, "HDEL h bio")
+	check("h", "hashtable")
+
 	for i := 0; i < 3000; i++ {
 		run(s, "RPUSH q item"+strconv.Itoa(i))
 	}

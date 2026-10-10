@@ -142,6 +142,20 @@ func (d *Dict[V]) Delete(key string) bool {
 	return false
 }
 
+func (d *Dict[V]) ForEach(fn func(key string, value V)) {
+	for i := 0; i <= 1; i++ {
+		t := d.ht[i]
+		if t == nil {
+			continue
+		}
+		for _, head := range t.buckets {
+			for e := head; e != nil; e = e.next {
+				fn(e.key, e.value)
+			}
+		}
+	}
+}
+
 func (d *Dict[V]) RandomEntry() (string, V, bool) {
 	var zero V
 	if d.Len() == 0 {

@@ -107,3 +107,74 @@ func cmdLIndex(s *Store, args []string) string {
 	}
 	return nullBulkString()
 }
+
+func cmdHSet(s *Store, args []string) string {
+	if len(args)%2 != 0 {
+		return wrongArgs("hset")
+	}
+	h, _, errR := getOrCreate(s, args[1], TypeHash, true, NewHash)
+	if errR != "" {
+		return errR
+	}
+	added := 0
+	for i := 2; i < len(args); i += 2 {
+		if h.Set(args[i], args[i+1]) {
+			added++
+		}
+	}
+	return integerReply(added)
+}
+
+func cmdHGet(s *Store, args []string) string {
+	h, ok, errR := getOrCreate(s, args[1], TypeHash, false, NewHash)
+	if errR != "" {
+		return errR
+	}
+	if !ok {
+		return nullBulkString()
+	}
+	if v, found := h.Get(args[2]); found {
+		return bulkString(v)
+	}
+	return nullBulkString()
+}
+
+func cmdHDel(s *Store, args []string) string {
+	h, ok, errR := getOrCreate(s, args[1], TypeHash, false, NewHash)
+	if errR != "" {
+		return errR
+	}
+	if !ok {
+		return integerReply(0)
+	}
+	deleted := 0
+	for _, f := range args[2:] {
+		if h.Delete(f) {
+			deleted++
+		}
+	}
+	dropIfEmpty(s, args[1], h.Len())
+	return integerReply(deleted)
+}
+
+func cmdHLen(s *Store, args []string) string {
+	h, ok, errR := getOrCreate(s, args[1], TypeHash, false, NewHash)
+	if errR != "" {
+		return errR
+	}
+	if !ok {
+		return integerReply(0)
+	}
+	return integerReply(h.Len())
+}
+
+func cmdHGetAll(s *Store, args []string) string {
+	h, ok, errR := getOrCreate(s, args[1], TypeHash, false, NewHash)
+	if errR != "" {
+		return errR
+	}
+	if !ok {
+		return arrayReply(nil)
+	}
+	return arrayReply(h.All())
+}

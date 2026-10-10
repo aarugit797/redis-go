@@ -7,14 +7,17 @@ type ObjType int
 const (
 	TypeString ObjType = iota
 	TypeList
+	TypeHash
 )
 
 func (t ObjType) String() string {
 	switch t {
 	case TypeString:
 		return "string"
-	default:
+	case TypeList:
 		return "list"
+	default:
+		return "hash"
 	}
 }
 
@@ -24,8 +27,10 @@ type Object struct {
 }
 
 const (
-	embstrMaxLen      = 44
-	listMaxBlockBytes = 8 * 1024
+	embstrMaxLen           = 44
+	listMaxBlockBytes      = 8 * 1024
+	hashMaxListpackEntries = 128
+	hashMaxListpackValue   = 64
 )
 
 const wrongTypeErr = "WRONGTYPE Operation against a key holding the wrong kind of value"
@@ -41,6 +46,8 @@ func (o *Object) Encoding() string {
 		}
 		return "raw"
 	case *List:
+		return v.Encoding()
+	case *Hash:
 		return v.Encoding()
 	}
 	return "unknown"
