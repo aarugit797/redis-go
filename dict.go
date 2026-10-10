@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	initialSize   = 4  
-	emptyVisitCap = 10 
-	shrinkRatio   = 8  
+	initialSize   = 4
+	emptyVisitCap = 10
+	shrinkRatio   = 8
 )
 
 type entry[V any] struct {
@@ -29,13 +29,11 @@ func newTable[V any](size uint64) *table[V] {
 	return &table[V]{buckets: make([]*entry[V], size), mask: size - 1}
 }
 
-func (t *table[V]) size() uint64 {
-	return t.mask + 1
-}
+func (t *table[V]) size() uint64 { return t.mask + 1 }
 
 type Dict[V any] struct {
 	ht        [2]*table[V]
-	rehashIdx int64 
+	rehashIdx int64
 	seed      maphash.Seed
 }
 
@@ -43,17 +41,13 @@ func NewDict[V any]() *Dict[V] {
 	return &Dict[V]{
 		ht:        [2]*table[V]{newTable[V](initialSize), nil},
 		rehashIdx: -1,
-		seed:      maphash.MakeSeed(), 
+		seed:      maphash.MakeSeed(),
 	}
 }
 
-func (d *Dict[V]) hash(key string) uint64 {
-	return maphash.String(d.seed, key)
-}
+func (d *Dict[V]) hash(key string) uint64 { return maphash.String(d.seed, key) }
 
-func (d *Dict[V]) isRehashing() bool {
-	return d.rehashIdx != -1
-}
+func (d *Dict[V]) isRehashing() bool { return d.rehashIdx != -1 }
 
 func (d *Dict[V]) Len() int {
 	n := d.ht[0].used
@@ -63,10 +57,9 @@ func (d *Dict[V]) Len() int {
 	return n
 }
 
-
 func (d *Dict[V]) Get(key string) (V, bool) {
 	if d.isRehashing() {
-		d.rehash(1) 
+		d.rehash(1)
 	}
 	if e := d.find(key, d.hash(key)); e != nil {
 		return e.value, true
@@ -82,6 +75,7 @@ func (d *Dict[V]) find(key string, h uint64) *entry[V] {
 			break
 		}
 		idx := h & t.mask
+
 		if i == 0 && d.isRehashing() && int64(idx) < d.rehashIdx {
 			continue
 		}
@@ -94,20 +88,19 @@ func (d *Dict[V]) find(key string, h uint64) *entry[V] {
 	return nil
 }
 
-
 func (d *Dict[V]) Set(key string, value V) {
 	if d.isRehashing() {
 		d.rehash(1)
 	}
 	h := d.hash(key)
-
 	if e := d.find(key, h); e != nil {
 		e.value = value
 		return
 	}
-
 	d.expandIfNeeded()
 
+	// During a rehash new keys go into ht[1] only, so ht[0] can only shrink
+	// and the rehash is guaranteed to terminate.
 	t := d.ht[0]
 	if d.isRehashing() {
 		t = d.ht[1]
@@ -117,13 +110,11 @@ func (d *Dict[V]) Set(key string, value V) {
 	t.used++
 }
 
-
 func (d *Dict[V]) Delete(key string) bool {
 	if d.isRehashing() {
 		d.rehash(1)
 	}
 	h := d.hash(key)
-
 	for i := 0; i <= 1; i++ {
 		t := d.ht[i]
 		if t == nil {
@@ -159,10 +150,10 @@ func (d *Dict[V]) RandomEntry() (string, V, bool) {
 	if d.isRehashing() {
 		d.rehash(1)
 	}
-
 	var head *entry[V]
 	for head == nil {
 		if d.isRehashing() {
+
 			s0 := d.ht[0].size()
 			total := s0 - uint64(d.rehashIdx) + d.ht[1].size()
 			i := uint64(d.rehashIdx) + uint64(rand.Int63n(int64(total)))
@@ -175,7 +166,6 @@ func (d *Dict[V]) RandomEntry() (string, V, bool) {
 			head = d.ht[0].buckets[rand.Int63n(int64(d.ht[0].size()))]
 		}
 	}
-
 	chainLen := 0
 	for e := head; e != nil; e = e.next {
 		chainLen++
@@ -192,7 +182,7 @@ func (d *Dict[V]) expandIfNeeded() {
 		return
 	}
 	t := d.ht[0]
-	if uint64(t.used) >= t.size() { 
+	if uint64(t.used) >= t.size() {
 		d.startRehash(t.size() * 2)
 	}
 }
@@ -228,9 +218,11 @@ func (d *Dict[V]) rehash(n int) bool {
 	old, nw := d.ht[0], d.ht[1]
 
 	for n > 0 && old.used != 0 {
+
 		if uint64(d.rehashIdx) >= old.size() {
 			panic("rehash cursor ran past the end with keys still in the old table")
 		}
+
 		for old.buckets[d.rehashIdx] == nil {
 			d.rehashIdx++
 			emptyVisits--
@@ -238,6 +230,7 @@ func (d *Dict[V]) rehash(n int) bool {
 				return true
 			}
 		}
+
 		e := old.buckets[d.rehashIdx]
 		for e != nil {
 			next := e.next
