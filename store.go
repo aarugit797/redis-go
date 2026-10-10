@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -252,6 +253,27 @@ func (s *Store) flushAll() {
 	s.expires = NewDict[int64]()
 	s.usedMemory = 0
 	s.pool = [evictionPoolSize]poolEntry{}
+}
+
+func (s *Store) info(mode string) string {
+	aofOn, aofSize, aofRewriting := 0, int64(0), 0
+	if s.aof != nil {
+		aofOn = 1
+		aofSize, aofRewriting = s.aof.Status()
+	}
+	bg := 0
+	if s.bgsaveRunning {
+		bg = 1
+	}
+	return fmt.Sprintf("# Server\r\nexecution_mode:%s\r\n"+
+		"# Memory\r\nused_memory_estimate:%d\r\nmaxmemory:%d\r\nmaxmemory_policy:%s\r\n"+
+		"# Persistence\r\nloading:0\r\nrdb_changes_since_last_save:%d\r\nrdb_bgsave_in_progress:%d\r\n"+
+		"rdb_last_save_time:%d\r\naof_enabled:%d\r\naof_rewrite_in_progress:%d\r\naof_current_size:%d\r\n"+
+		"# Stats\r\ntotal_commands_processed:%d\r\nexpired_keys:%d\r\nevicted_keys:%d\r\n"+
+		"# Keyspace\r\nkeys:%d\r\nexpires:%d\r\n",
+		mode, s.usedMemory, s.cfg.MaxMemory, s.cfg.MaxMemoryPolicy,
+		s.dirty, bg, s.lastSave.Unix(), aofOn, aofRewriting, aofSize,
+		s.totalCommands, s.expiredKeys, s.evictedKeys, s.data.Len(), s.expires.Len())
 }
 
 func logf(format string, args ...any) { log.Printf(format, args...) }

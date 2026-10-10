@@ -40,6 +40,8 @@ func init() {
 		"DBSIZE":    {fn: cmdDBSize, arity: 1},
 		"FLUSHALL":  {fn: cmdFlushAll, arity: -1, write: true},
 		"HTSTATS":   {fn: cmdHTStats, arity: 1},
+		"INFO":      {fn: cmdInfo, arity: -1},
+		"CONFIG":    {fn: cmdConfig, arity: -2},
 
 		"SAVE":         {fn: cmdSave, arity: 1},
 		"BGSAVE":       {fn: cmdBgsave, arity: 1},
@@ -289,6 +291,32 @@ func cmdFlushAll(s *Store, args []string) string {
 
 func cmdHTStats(s *Store, args []string) string {
 	return bulkString("data -> " + s.data.Stats() + " || expires -> " + s.expires.Stats())
+}
+
+func cmdInfo(s *Store, args []string) string { return bulkString(s.info(s.cfg.Mode)) }
+
+func cmdConfig(s *Store, args []string) string {
+	if strings.ToUpper(args[1]) != "GET" || len(args) != 3 {
+		return errorReply("ERR only CONFIG GET <name> is supported")
+	}
+	values := map[string]string{
+		"save":              s.cfg.saveRulesString(),
+		"appendonly":        map[bool]string{true: "yes", false: "no"}[s.cfg.AppendOnly],
+		"appendfsync":       s.cfg.AppendFsync,
+		"maxmemory":         strconv.FormatInt(s.cfg.MaxMemory, 10),
+		"maxmemory-policy":  s.cfg.MaxMemoryPolicy,
+		"maxmemory-samples": strconv.Itoa(s.cfg.MaxMemorySample),
+		"lfu-log-factor":    strconv.Itoa(s.cfg.LFULogFactor),
+		"lfu-decay-time":    strconv.Itoa(s.cfg.LFUDecayTime),
+	}
+	pattern := strings.ToLower(args[2])
+	var out []string
+	for name, v := range values {
+		if pattern == "*" || pattern == name {
+			out = append(out, name, v)
+		}
+	}
+	return arrayReply(out)
 }
 
 func cmdSave(s *Store, args []string) string {

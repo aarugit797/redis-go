@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -209,5 +211,58 @@ func TestLFUCounterIsLogarithmicAndDecays(t *testing.T) {
 	obj.lru = (ldt-30)<<8 | counter
 	if got := s.lfuDecayed(obj); got != counter-30 {
 		t.Fatalf("decayed counter %d, want %d", got, counter-30)
+	}
+}
+
+func TestServerModes(t *testing.T) {
+	for _, mode := range []string{"single", "locked"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.SaveRules = nil
+			cfg.Dir = t.TempDir()
+			cfg.Mode = mode
+			srv := NewServer(cfg, NewStore(cfg))
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+			go srv.Serve(ln)
+
+			done := make(chan error, 20)
+			for c := 0; c < 20; c++ {
+				go func(c int) {
+					conn, err := net.Dial("tcp", ln.Addr().String())
+					if err != nil {
+						done <- err
+						return
+					}
+					defer conn.Close()
+					var batch []byte
+					for i := 0; i < 200; i++ {
+						key := "c" + strconv.Itoa(c) + "k" + strconv.Itoa(i)
+						batch = appendCommand(batch, []string{"SET", key, strconv.Itoa(i)})
+						batch = appendCommand(batch, []string{"GET", key})
+					}
+					conn.Write(batch)
+					r := bufio.NewReader(conn)
+					for i := 0; i < 200; i++ {
+						ok, _ := r.ReadString('\n')
+						r.ReadString('\n')
+						val, _ := r.ReadString('\n')
+						if ok != "+OK\r\n" || strings.TrimSpace(val) != strconv.Itoa(i) {
+							done <- &net.AddrError{Err: "bad reply " + ok + val}
+							return
+						}
+					}
+					done <- nil
+				}(c)
+			}
+			for c := 0; c < 20; c++ {
+				if err := <-done; err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
 	}
 }

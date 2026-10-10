@@ -13,6 +13,7 @@ type saveRule struct {
 
 type Config struct {
 	Port int
+	Mode string
 	Dir  string
 
 	AppendOnly  bool
@@ -29,6 +30,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Port:            6380,
+		Mode:            "single",
 		Dir:             ".",
 		AppendFsync:     "everysec",
 		SaveRules:       []saveRule{{3600, 1}, {300, 100}, {60, 10000}},

@@ -3,3 +3,4 @@ dump.rdb
 appendonly.aof
 *.tmp
 *.exe
+whereami.md

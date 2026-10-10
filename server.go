@@ -17,22 +17,43 @@ const maxBatch = 1024
 type batchRequest struct {
 	commands [][]string
 	replies  []string
+	done     chan struct{}
 }
 
 type Server struct {
 	cfg   *Config
 	store *Store
 
-	mu sync.Mutex
+	mu   sync.Mutex
+	reqs chan *batchRequest
 }
 
 func NewServer(cfg *Config, store *Store) *Server {
 	srv := &Server{cfg: cfg, store: store}
-	go srv.cronLoop()
+	if cfg.Mode == "single" {
+		srv.reqs = make(chan *batchRequest, 4096)
+		go srv.executorLoop()
+	} else {
+		go srv.lockedCron()
+	}
 	return srv
 }
 
-func (srv *Server) cronLoop() {
+func (srv *Server) executorLoop() {
+	ticker := time.NewTicker(cronInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case req := <-srv.reqs:
+			srv.runBatch(req)
+			req.done <- struct{}{}
+		case <-ticker.C:
+			srv.store.cron()
+		}
+	}
+}
+
+func (srv *Server) lockedCron() {
 	ticker := time.NewTicker(cronInterval)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -55,6 +76,11 @@ func (srv *Server) runBatch(req *batchRequest) {
 }
 
 func (srv *Server) execute(req *batchRequest) {
+	if srv.cfg.Mode == "single" {
+		srv.reqs <- req
+		<-req.done
+		return
+	}
 	srv.mu.Lock()
 	srv.runBatch(req)
 	srv.mu.Unlock()
@@ -76,7 +102,7 @@ func (srv *Server) ListenAndServe() error {
 		return err
 	}
 	defer listener.Close()
-	logf("listening on :%d", srv.cfg.Port)
+	logf("listening on :%d (execution mode: %s)", srv.cfg.Port, srv.cfg.Mode)
 	return srv.Serve(listener)
 }
 
@@ -98,9 +124,10 @@ func (srv *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReaderSize(conn, 16*1024)
 	writer := bufio.NewWriterSize(conn, 16*1024)
-	req := &batchRequest{}
+	req := &batchRequest{done: make(chan struct{}, 1)}
 
 	for {
+
 		req.commands = req.commands[:0]
 		args, err := parseRESP(reader)
 		if err != nil {
