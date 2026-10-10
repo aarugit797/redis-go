@@ -11,7 +11,10 @@ import (
 )
 
 func newTestStore(t *testing.T) *Store {
-	return NewStore(DefaultConfig())
+	cfg := DefaultConfig()
+	cfg.SaveRules = nil
+	cfg.Dir = t.TempDir()
+	return NewStore(cfg)
 }
 
 func run(s *Store, cmds ...string) string {

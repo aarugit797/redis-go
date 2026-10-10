@@ -1,8 +1,4 @@
-# Compiled binaries (go build drops these in the module root)
+redis-go
+dump.rdb
+*.tmp
 *.exe
-*.exe~
-*.dll
-*.test
-
-# Test and coverage output
-*.out

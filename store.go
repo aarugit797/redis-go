@@ -17,12 +17,24 @@ type Store struct {
 	data    *Dict[*Object]
 	expires *Dict[int64]
 
+	dirty            int64
+	dirtyAtSaveStart int64
+	lastSave         time.Time
+	bgsaveRunning    bool
+	saveDone         chan error
+
 	expiredKeys   int64
 	totalCommands int64
 }
 
 func NewStore(cfg *Config) *Store {
-	return &Store{cfg: cfg, data: NewDict[*Object](), expires: NewDict[int64]()}
+	return &Store{
+		cfg:      cfg,
+		data:     NewDict[*Object](),
+		expires:  NewDict[int64](),
+		lastSave: time.Now(),
+		saveDone: make(chan error, 1),
+	}
 }
 
 func nowMillis() int64 { return time.Now().UnixMilli() }
@@ -70,6 +82,7 @@ func (s *Store) cron() {
 	s.activeExpireCycle(expireCycleBudget)
 	s.data.RehashFor(rehashBudget)
 	s.expires.RehashFor(rehashBudget)
+	s.persistenceCron()
 }
 
 func (s *Store) activeExpireCycle(budget time.Duration) {

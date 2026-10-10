@@ -35,6 +35,10 @@ func init() {
 		"FLUSHALL":  {fn: cmdFlushAll, arity: -1},
 		"HTSTATS":   {fn: cmdHTStats, arity: 1},
 
+		"SAVE":     {fn: cmdSave, arity: 1},
+		"BGSAVE":   {fn: cmdBgsave, arity: 1},
+		"LASTSAVE": {fn: cmdLastSave, arity: 1},
+
 		"LPUSH":  {fn: cmdPush, arity: -3},
 		"RPUSH":  {fn: cmdPush, arity: -3},
 		"LPOP":   {fn: cmdPop, arity: 2},
@@ -256,3 +260,22 @@ func parseExpireAt(arg string, unitMs int64, cmd string, allowPast bool) (int64,
 	}
 	return now + n*unitMs, ""
 }
+
+func cmdSave(s *Store, args []string) string {
+	if s.bgsaveRunning {
+		return errorReply("ERR Background save already in progress")
+	}
+	if err := s.save(); err != nil {
+		return errorReply("ERR " + err.Error())
+	}
+	return simpleString("OK")
+}
+
+func cmdBgsave(s *Store, args []string) string {
+	if err := s.bgsave(); err != nil {
+		return errorReply("ERR " + err.Error())
+	}
+	return simpleString("Background saving started")
+}
+
+func cmdLastSave(s *Store, args []string) string { return integerReply(int(s.lastSave.Unix())) }
