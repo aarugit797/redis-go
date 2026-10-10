@@ -54,6 +54,14 @@ func init() {
 		"SISMEMBER": {fn: cmdSIsMember, arity: 3},
 		"SCARD":     {fn: cmdSCard, arity: 2},
 		"SMEMBERS":  {fn: cmdSMembers, arity: 2},
+
+		"ZADD":          {fn: cmdZAdd, arity: -4},
+		"ZSCORE":        {fn: cmdZScore, arity: 3},
+		"ZRANK":         {fn: cmdZRank, arity: 3},
+		"ZREM":          {fn: cmdZRem, arity: -3},
+		"ZCARD":         {fn: cmdZCard, arity: 2},
+		"ZRANGE":        {fn: cmdZRange, arity: -4},
+		"ZRANGEBYSCORE": {fn: cmdZRangeByScore, arity: -4},
 	}
 }
 

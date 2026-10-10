@@ -1,7 +1,9 @@
 package main
 
 import (
+	"math/rand"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -140,6 +142,13 @@ func TestEncodingsChange(t *testing.T) {
 	run(s, "HDEL h bio")
 	check("h", "hashtable")
 
+	run(s, "ZADD z 1 a")
+	check("z", "listpack")
+	for i := 0; i < 200; i++ {
+		run(s, "ZADD z "+strconv.Itoa(i)+" m"+strconv.Itoa(i))
+	}
+	check("z", "skiplist")
+
 	for i := 0; i < 3000; i++ {
 		run(s, "RPUSH q item"+strconv.Itoa(i))
 	}
@@ -149,17 +158,60 @@ func TestEncodingsChange(t *testing.T) {
 	}
 }
 
-func TestListCommands(t *testing.T) {
+func TestSkipListOrderRankAndDelete(t *testing.T) {
+	type pair struct {
+		m string
+		s float64
+	}
+	sl := NewSkipList()
+	var all []pair
+	for i := 0; i < 2000; i++ {
+		p := pair{"m" + strconv.Itoa(i), float64(rand.Intn(500))}
+		all = append(all, p)
+		sl.Insert(p.m, p.s)
+	}
+	check := func(want []pair) {
+		sort.Slice(want, func(i, j int) bool {
+			return want[i].s < want[j].s || (want[i].s == want[j].s && want[i].m < want[j].m)
+		})
+		x := sl.header.level[0].forward
+		for i, p := range want {
+			if x == nil || x.member != p.m {
+				t.Fatalf("position %d: expected %s", i, p.m)
+			}
+			if r := sl.Rank(p.m, p.s); r != i+1 {
+				t.Fatalf("rank of %s is %d, want %d", p.m, r, i+1)
+			}
+			if n := sl.NodeAtRank(i + 1); n == nil || n.member != p.m {
+				t.Fatalf("NodeAtRank(%d) wrong", i+1)
+			}
+			x = x.level[0].forward
+		}
+	}
+	check(append([]pair(nil), all...))
+	var kept []pair
+	for i, p := range all {
+		if i%2 == 0 {
+			sl.Delete(p.m, p.s)
+		} else {
+			kept = append(kept, p)
+		}
+	}
+	check(kept)
+}
+
+func TestListAndZSetCommands(t *testing.T) {
 	s := newTestStore(t)
 	run(s, "RPUSH l a b c", "LPUSH l z")
 	if got := run(s, "LRANGE l 0 -1"); got != arrayReply([]string{"z", "a", "b", "c"}) {
 		t.Fatalf("LRANGE = %q", got)
 	}
-	if run(s, "LLEN l") != integerReply(4) {
-		t.Fatal("LLEN wrong")
+	run(s, "ZADD lb 1500 aaru 2200 riya 900 kabir")
+	if got := run(s, "ZRANGE lb 0 -1"); got != arrayReply([]string{"kabir", "aaru", "riya"}) {
+		t.Fatalf("ZRANGE = %q", got)
 	}
-	if run(s, "LINDEX l -1") != bulkString("c") {
-		t.Fatal("LINDEX wrong")
+	if run(s, "ZRANK lb aaru") != integerReply(1) {
+		t.Fatal("ZRANK wrong")
 	}
 	run(s, "RPOP l", "RPOP l", "RPOP l", "RPOP l")
 	if run(s, "TYPE l") != simpleString("none") {

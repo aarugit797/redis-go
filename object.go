@@ -9,6 +9,7 @@ const (
 	TypeList
 	TypeHash
 	TypeSet
+	TypeZSet
 )
 
 func (t ObjType) String() string {
@@ -19,8 +20,10 @@ func (t ObjType) String() string {
 		return "list"
 	case TypeHash:
 		return "hash"
-	default:
+	case TypeSet:
 		return "set"
+	default:
+		return "zset"
 	}
 }
 
@@ -37,6 +40,8 @@ const (
 	setMaxIntsetEntries    = 512
 	setMaxListpackEntries  = 128
 	setMaxListpackValue    = 64
+	zsetMaxListpackEntries = 128
+	zsetMaxListpackValue   = 64
 )
 
 const wrongTypeErr = "WRONGTYPE Operation against a key holding the wrong kind of value"
@@ -56,6 +61,8 @@ func (o *Object) Encoding() string {
 	case *Hash:
 		return v.Encoding()
 	case *Set:
+		return v.Encoding()
+	case *ZSet:
 		return v.Encoding()
 	}
 	return "unknown"
